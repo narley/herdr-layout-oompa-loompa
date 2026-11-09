@@ -7,7 +7,7 @@
 // but jobs.json, runs nothing, opens no connection.
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, terminals, spaces, panes, openOverlay, appHome, readTextFile, run, setAgentOrder, theme, shared, setShared } from "herdr";
+import { hc, notify, agents, terminals, spaces, panes, openOverlay, appHome, readTextFile, run, setAgentOrder, theme, shared, setShared } from "herdr";
 import { ALERT, FX, JOBS, agentKey, allKeys, appLabel, assignJobs, fxPath, jobIn, portraitPath, spritePath } from "./lib.js";
 
 const JOBS_FILE = `${appHome()}/mods/oompa-agents/jobs.json`;
@@ -16,7 +16,7 @@ const SPRITE_H = 96;
 const CREW = "oompa.crew";   // { <session>: { job, at } }: workers changed by clicking them
 const KEEP_CREW = 60;        // kept for sessions no longer on screen
 const MIN = "cards.min";   // { <terminal address>:<created_ms>: true } for minimised cards
-const STATUS = { working: "Mixing", blocked: "Needs you", done: "Done", idle: "Resting" };
+const STATUS = { detached: "Detached", working: "Mixing", blocked: "Needs you", done: "Done", idle: "Resting" };
 const STALE_S = 12 * 3600;   // older stats are marked "old", never guessed
 const SUB_FRESH_S = 90;      // a helper count with no watcher behind it
 
@@ -75,6 +75,24 @@ function actionButtons(a, s, kids, t) {
     .when(s?.loc === "wt" && Boolean(s?.dir), (el) => el.child(chip("act-wt", svg("mods/oompa-agents/bin.svg").size(12).text_color(t.accent), "Close this session and delete its worktree", "worktree")));
 }
 
+// An attached session's pane can lose Claude (a restart, a crash) and fall back to a shell, while
+// its old labels stay. Such a card is DETACHED, and clicking it reattaches: it only types when the
+// pane is at a shell prompt, so anything else running there just gets focus.
+const detachedFrom = (t) => {
+  const fg = t.foreground;
+  return Boolean(fg) && !(fg.argv ?? []).join(" ").includes("claude") && !/^\d+\.\d+\.\d+/.test(fg.name ?? "");
+};
+const atShell = (t) => /^-?(zsh|bash|fish|sh|dash)$/.test(String(t.foreground?.name ?? "").split("/").pop());
+async function reattach(k) {
+  run("pane.focus", { terminal: k.address });
+  if (!k.shell || !/^[A-Za-z0-9_-]+$/.test(k.bg ?? "")) return;
+  const profile = k.stats?.profile;
+  const config = profile && profile !== "default" && /^[A-Za-z0-9_-]+$/.test(profile) ? `CLAUDE_CONFIG_DIR="$HOME/.claude-${profile}" ` : "";
+  await hc(["keys", k.address, "ctrl+u"]);   // anything half-typed at the prompt
+  const r = await hc(["send", k.address, `${config}claude attach ${k.bg}`]);
+  if (r.code !== 0) notify({ title: "Couldn't reattach", body: (r.stderr || r.stdout || "").trim(), level: "error" });
+}
+
 // Attached background sessions (`claude --bg` in a child terminal labelled claude.bg), by
 // their parent's address, as agent-shaped rows. Their stats label names the parent.
 function bgChildren(all) {
@@ -87,8 +105,8 @@ function bgChildren(all) {
     if (!s.parent) continue;
     const machine = t.address.includes("/") ? `${t.address.split("/")[0]}/` : "";
     const key = `${machine}${s.parent}`;
-    const status = s.state === "working" || s.state === "busy" ? "working" : /input|wait|block/.test(s.state ?? "") ? "blocked" : "idle";
-    out.set(key, [...(out.get(key) ?? []), { address: t.address, app: "claude-code", status, focused: false, bg: t.labels["claude.bg"], tab_name: s.name ?? t.address, stats: s }]);
+    const status = detachedFrom(t) ? "detached" : s.state === "working" || s.state === "busy" ? "working" : /input|wait|block/.test(s.state ?? "") ? "blocked" : "idle";
+    out.set(key, [...(out.get(key) ?? []), { address: t.address, app: "claude-code", status, shell: atShell(t), focused: false, bg: t.labels["claude.bg"], tab_name: s.name ?? t.address, stats: s }]);
   }
   for (const kids of out.values()) kids.sort((x, y) => String(x.stats.name ?? x.address).localeCompare(String(y.stats.name ?? y.address)));
   return out;
@@ -104,6 +122,7 @@ const cacheText = (s, now) => {
 
 // Everything a minimised card is hiding, for its tooltip.
 function foldedTip(a, s, name, who, word, machine, now, kids) {
+  if (a.status === "detached") return `${name}\nDetached. Click to reattach.`;
   const where = machine ? ` @${machine}` : "";
   const lines = [name, [who, word].filter(Boolean).join(" · ")];
   if (s) {
@@ -273,7 +292,9 @@ export default class Workers extends View {
       .when(this.hoveredCard === a.address, (el) => el.child(this.minButton(a, false, t)))];
     const body = { child: (el) => rows.push(el) };
 
-    if (s) {
+    if (a.status === "detached") {
+      body.child(line("detached", [flex("Click to reattach", t.accent)]));
+    } else if (s) {
       // repo and the machine when it isn't this one, then the branch (wt: a linked worktree)
       if (s.repo || machine) body.child(line("where", [s.repo && flex(s.repo, t.muted), machine && span(s.repo ? `  ${machine}` : machine, t.dim)]));
       if (s.branch) body.child(line("branch", [flex(`${s.loc === "wt" ? "wt" : "br"}: ${s.branch}`, t.muted)]));
@@ -328,7 +349,7 @@ export default class Workers extends View {
       .when(nested || kids.length > 0, (el) => el.border(1).border_color(this.focusedTerm === a.address ? t.foreground : "#00000000"))
       .cursor_pointer()
       .hover((st) => st.bg(t.hover))
-      .on_click(() => run(nested ? "pane.focus" : "agent.focus", { terminal: a.address }))
+      .on_click(() => a.status === "detached" ? reattach(a) : run(nested ? "pane.focus" : "agent.focus", { terminal: a.address }))
       .on_hover((on, cx) => {
         if (on) this.hoveredCard = a.address;
         else if (this.hoveredCard === a.address) this.hoveredCard = null;
