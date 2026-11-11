@@ -16,6 +16,8 @@ function find(node, id) {
 
 export default class Tabs extends View {
   init(_props, cx) {
+    // The Workflows button opens a `workflows` mod, so it shows only once one is installed in the Herdr home.
+    cx.spawn(async (cx) => { this.workflows = (await readTextFile(`${appHome()}/mods/workflows/mod.json`).catch(() => null)) !== null; cx.notify(); });
     this.pressed = null;
     this.jobs = {};
     cx.spawn(async (cx) => {
@@ -106,6 +108,7 @@ export default class Tabs extends View {
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+      .when(Boolean(this.workflows), el => el.child(button("workflows", "Workflows", () => run("mod.open", { name: "workflows" }))))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/oompa-tabs/art/files.png")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/oompa-tabs/art/changes.png")))
       .child(panelButton("inbox", "Inbox", "mods/oompa-tabs/art/inbox.png"))
