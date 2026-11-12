@@ -9,6 +9,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, appHome, readTextFile } from "herdr";
 import { Workers as Cards } from "./operators.js";
+import { Terminals } from "./terminals.js";
 import { GROUPS, newTabButton, groupFolded, toggleGroup, machinesInOrder, arrangedRows, writeOrder, finishDrag, cancelDrag, startDrag, dropArea, dropMachine, spaceItem } from "./arrange.js";
 
 const PLACES = ["waterfall", "factory", "inventing", "orchard"];
@@ -84,6 +85,8 @@ export default class Spaces extends View {
     });
     this.ops = new Cards();
     this.ops.init?.(_props, cx);   // its own timers and data
+    this.shells = new Terminals();   // plain terminals per space (terminals.js)
+    this.shells.init(_props, cx);
     this.spaceFolded = new Set(JSON.parse(localStorage.getItem("spaces.folded") ?? "[]"));
     this.remoteFolded = JSON.parse(localStorage.getItem("sections.remoteFolded") ?? "false");
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
@@ -320,7 +323,7 @@ export default class Spaces extends View {
     const O = this.ops;
     const nest = (children, tree) => v_flex().flex_none().ml(tree ? 24 : 12).pl(4).gap(5).mt(3).mb(5).border_l(1).border_color(t.border).children(children);
     const draw = (r) => {
-      const kids = this.spaceFolded.has(r.w.id) ? [] : O.rowsFor(r.w.id, t);
+      const kids = this.spaceFolded.has(r.w.id) ? [] : [...O.rowsFor(r.w.id, t), ...this.shells.rowsFor(r.w, t)];
       return [r.tree ? this.row(r, t) : spaceItem(r, this.rowsNow, t, this.row(r, t)), ...(kids.length ? [nest(kids, r.tree)] : [])];
     };
     const out = rows.length ? GROUPS.flatMap((g) => [this.groupHead(machine, g, rows, t), ...(groupFolded(machine, g) ? [] : rows.filter((r) => r.group === g).flatMap(draw))]) : [];
@@ -513,7 +516,7 @@ export default class Spaces extends View {
             .child(h_flex().gap(9).items_center()
               .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
               .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
-              .child(newTabButton(w, t))
+              .child(newTabButton(w, t, this.shells.count(w)))
               .when(!this.spaceFolded.has(w.id) && this.ops.count(w.id) > 0, (el) => el.child(this.spaceMinAll(w, t)))
               .when(this.ops.count(w.id) > 0, (el) => el.child(this.spaceFold(w, t))))
             .when(!tree, el => el.children(this.gitLines(sum, t)))),
@@ -573,6 +576,7 @@ export default class Spaces extends View {
     }
     if (changed) setShared("space.colors", kept);
     this.ops.prepare(sp);
+    this.shells.prepare(sp);
     return v_flex().size_full().min_h(0).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
