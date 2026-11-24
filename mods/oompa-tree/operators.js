@@ -144,12 +144,16 @@ function mix(a, b, f) {
 const CTX = "mods/oompa-agents/ctx";
 const CTX_STEPS = 12;
 const CTX_AMBER = "#ffa726";
+// The colour for context used (0-100), on the ring and the context bar: green up to 25%,
+// warming to amber by 50%, then red by 85% (the theme's green and red; a fixed amber, since
+// some themes' yellow reads as lime).
+function ctxColor(used, t) {
+  return used < 25 ? t.ansi2 : used < 50 ? mix(t.ansi2, CTX_AMBER, (used - 25) / 25) : used < 85 ? mix(CTX_AMBER, t.blocked, (used - 50) / 35) : t.blocked;
+}
 function ctxRing(a, s, t) {
   if (s?.ctx?.pct == null) return null;
   const used = Math.max(0, Math.min(100, s.ctx.pct));
-  // green up to 25% used, warming to amber by 50%, then red by 85% (the theme's green and red;
-  // a fixed amber, since some themes' yellow reads as lime)
-  const color = used < 25 ? t.ansi2 : used < 50 ? mix(t.ansi2, CTX_AMBER, (used - 25) / 25) : used < 85 ? mix(CTX_AMBER, t.blocked, (used - 50) / 35) : t.blocked;
+  const color = ctxColor(used, t);
   const step = Math.round((used / 100) * CTX_STEPS);
   const layer = (src, c) => svg(src).absolute().top(0).left(0).size(11).text_color(c);
   return div().id(`ctx-${a.address}`).relative().size(11).flex_none().tooltip(contextTip("COCOA", s))
@@ -348,7 +352,7 @@ export class Workers {
       const cocoa = 100 - (s.ctx?.pct ?? 0);
       const five = s.rl?.five_hour;
       const sugar = five && five.resets_at > now ? 100 - (five.used_percentage ?? 0) : null;
-      body.child(div().id(`ol-cocoa-${a.address}`).w_full().tooltip(contextTip("COCOA", s)).child(this.bar("COCOA", cocoa, cocoa < 10 ? t.blocked : cocoa < 25 ? t.ansi3 : t.solid, old, t)));
+      body.child(div().id(`ol-cocoa-${a.address}`).w_full().tooltip(contextTip("COCOA", s)).child(this.bar("COCOA", cocoa, ctxColor(100 - cocoa, t), old, t)));
       body.child(div().id(`ol-sugar-${a.address}`).w_full().tooltip(limitTip("SUGAR", s, now)).child(this.bar("SUGAR", sugar, sugar != null && sugar < 10 ? t.blocked : t.ansi5, old, t)));
       // cache · helpers: the main session counts while it works, as in the herdr TUI card
       const cache = cacheText(s, now);
