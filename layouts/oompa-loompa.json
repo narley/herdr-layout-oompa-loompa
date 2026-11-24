@@ -211,5 +211,8 @@
   ],
   "theme": "oompa-loompa",
   "terminal_opacity": 0.62,
-  "preview": "layouts/oompa-loompa.png"
+  "preview": "layouts/oompa-loompa.png",
+  "link_handlers": [
+    "code-peek"
+  ]
 }
